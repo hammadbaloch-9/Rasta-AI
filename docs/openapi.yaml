@@ -1,0 +1,1068 @@
+openapi: 3.0.3
+info:
+  title: RAASTA AI — Karachi Smart Traffic Management System API
+  version: 1.0.0
+  description: |
+    Backend for the RAASTA AI traffic simulation and decision-support prototype.
+
+    **This is a decision-support prototype.** Demand is synthetic, no live Karachi traffic feed is
+    connected, and results must not be used to justify construction or to control real signals.
+
+    All responses are JSON. Success responses use a `data` envelope; errors use
+    `{ error: { message, code, requestId, details? } }`.
+  contact:
+    name: RAASTA AI team
+servers:
+  - url: http://localhost:4000
+    description: Local development
+
+tags:
+  - name: Health
+  - name: Scenarios
+  - name: Simulations
+  - name: Intelligence
+  - name: Experiments
+
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Service and database status
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  service: { type: string, example: raasta-ai-backend }
+                  apiVersion: { type: string, example: 1.0.0 }
+                  engine:
+                    type: object
+                    properties:
+                      name: { type: string, example: raasta-sim }
+                      version: { type: string, example: 1.0.0 }
+                  uptimeSec: { type: integer }
+                  db:
+                    type: object
+                    properties:
+                      mode: { type: string, enum: [memory, mongo] }
+                      connected: { type: boolean }
+                      persistent: { type: boolean }
+                      reason: { type: string, nullable: true }
+                  time: { type: string, format: date-time }
+
+  /api/metrics/definitions:
+    get:
+      tags: [Health]
+      summary: Metric definitions, units and improvement formula
+      responses:
+        '200':
+          description: Definitions
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /api/dashboard:
+    get:
+      tags: [Health]
+      summary: Command Center snapshot (latest KPIs, alerts, recent runs and experiments)
+      responses:
+        '200':
+          description: Dashboard data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+                  meta:
+                    type: object
+                    additionalProperties: true
+
+  /api/scenarios:
+    get:
+      tags: [Scenarios]
+      summary: List Karachi-inspired simulation scenarios
+      responses:
+        '200':
+          description: Scenario summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ScenarioSummary'
+                  meta:
+                    type: object
+                    additionalProperties: true
+
+  /api/scenarios/{id}:
+    get:
+      tags: [Scenarios]
+      summary: Full scenario definition (network geometry, demand, signal settings)
+      parameters:
+        - $ref: '#/components/parameters/ScenarioId'
+      responses:
+        '200':
+          description: Scenario definition
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/simulations/run:
+    post:
+      tags: [Simulations]
+      summary: Run one simulation (instant) or start a live streamed run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunRequest'
+            examples:
+              fixedBaseline:
+                summary: Fixed-time baseline
+                value:
+                  scenarioId: saddar-balanced
+                  mode: fixed
+                  durationSec: 600
+                  seed: 42
+                  label: Baseline demo
+              adaptiveLive:
+                summary: Live adaptive run
+                value:
+                  scenarioId: rush-hour-surge
+                  mode: adaptive
+                  durationSec: 300
+                  seed: 7
+                  live: true
+                  tickMs: 100
+              emergency:
+                summary: Emergency corridor
+                value:
+                  scenarioId: saddar-balanced
+                  mode: fixed
+                  durationSec: 400
+                  seed: 42
+                  overrides:
+                    emergency:
+                      enabled: true
+                      afterSec: 120
+                      entryIntersectionId: I1
+                      entrySide: N
+                      destinationIntersectionId: I4
+      responses:
+        '201':
+          description: Completed simulation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Simulation'
+                  meta:
+                    type: object
+                    additionalProperties: true
+        '202':
+          description: Live simulation started (subscribe to the Socket.IO room)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SimulationSummary'
+                  meta:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/simulations/compare:
+    post:
+      tags: [Simulations]
+      summary: Paired fixed-vs-adaptive experiment with matched settings and seeds
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompareRequest'
+      responses:
+        '201':
+          description: Experiment created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      experiment:
+                        $ref: '#/components/schemas/Experiment'
+                      runs:
+                        type: object
+                        properties:
+                          fixed:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/SimulationSummary'
+                          adaptive:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/SimulationSummary'
+                      comparison:
+                        $ref: '#/components/schemas/Comparison'
+                      aggregate:
+                        type: object
+                        additionalProperties: true
+                  meta:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/simulations:
+    get:
+      tags: [Simulations]
+      summary: List simulation runs
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: scenarioId
+          in: query
+          schema: { type: string }
+        - name: mode
+          in: query
+          schema: { type: string, enum: [fixed, adaptive] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [queued, running, completed, failed] }
+        - name: experimentId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated run summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SimulationSummary'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /api/simulations/{id}:
+    get:
+      tags: [Simulations]
+      summary: Retrieve a simulation (status, configuration and results)
+      parameters:
+        - $ref: '#/components/parameters/SimulationId'
+        - name: includeFrames
+          in: query
+          description: Embed recorded replay frames in the response
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Simulation document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Simulation'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Simulations]
+      summary: Delete a simulation
+      parameters:
+        - $ref: '#/components/parameters/SimulationId'
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      deleted: { type: boolean }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/simulations/{id}/metrics:
+    get:
+      tags: [Simulations]
+      summary: Metrics, per-intersection/approach aggregates, time series and decisions
+      parameters:
+        - $ref: '#/components/parameters/SimulationId'
+      responses:
+        '200':
+          description: Measured metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      simulationId: { type: string }
+                      status: { type: string }
+                      metrics:
+                        $ref: '#/components/schemas/Metrics'
+                      fairness:
+                        type: object
+                        additionalProperties: true
+                      perIntersection:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                      perApproach:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                      timeSeries:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                      decisions:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Decision'
+                      disclaimer: { type: string }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/simulations/{id}/frames:
+    get:
+      tags: [Simulations]
+      summary: Recorded replay frames (requires record true at run time)
+      parameters:
+        - $ref: '#/components/parameters/SimulationId'
+      responses:
+        '200':
+          description: Recorded frames
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      simulationId: { type: string }
+                      recorded: { type: boolean }
+                      framesTruncated: { type: boolean }
+                      count: { type: integer }
+                      frames:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            t: { type: number }
+                            vehicles:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  id: { type: string }
+                                  x: { type: number }
+                                  y: { type: number }
+                                  speedKph: { type: number }
+                                  emergency: { type: boolean }
+                            signals:
+                              type: object
+                              additionalProperties: true
+                      note: { type: string }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/simulations/{id}/state:
+    get:
+      tags: [Simulations]
+      summary: Live state snapshot or final summary
+      parameters:
+        - $ref: '#/components/parameters/SimulationId'
+      responses:
+        '200':
+          description: Current state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      simulationId: { type: string }
+                      status: { type: string }
+                      live: { type: boolean }
+                      state:
+                        type: object
+                        nullable: true
+                        additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/hotspots:
+    get:
+      tags: [Intelligence]
+      summary: Hotspot candidates derived from a simulation run
+      parameters:
+        - name: simulationId
+          in: query
+          description: Completed simulation id (defaults to the latest completed run)
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+        - name: minSeverity
+          in: query
+          schema: { type: string, enum: [low, medium, high, critical] }
+      responses:
+        '200':
+          description: Hotspot detection result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/HotspotResult'
+                  meta:
+                    type: object
+                    additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Simulation has no completed metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/recommendations/evaluate:
+    post:
+      tags: [Intelligence]
+      summary: Screen interventions for a simulation, hotspot or raw metrics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Provide exactly one of simulationId, hotspot or metrics
+              properties:
+                simulationId: { type: string }
+                hotspot: { type: object, additionalProperties: true }
+                metrics: { type: object, additionalProperties: true }
+            examples:
+              bySimulation:
+                value: { simulationId: sim_example }
+              byMetrics:
+                value:
+                  metrics:
+                    averageQueueLength: 14
+                    maxQueueLength: 26
+                    averageSignalWaitSec: 75
+                    arrivals: 400
+                    discharged: 300
+      responses:
+        '200':
+          description: Intervention screening result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        additionalProperties: true
+                      evaluations:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Evaluation'
+                      caveat: { type: string }
+                  meta:
+                    type: object
+                    additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/experiments:
+    get:
+      tags: [Experiments]
+      summary: Experiment history
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: scenarioId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Experiments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Experiment'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /api/experiments/{id}:
+    get:
+      tags: [Experiments]
+      summary: Experiment detail with run summaries
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Experiment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/Experiment'
+                      - type: object
+                        properties:
+                          runsDetail:
+                            type: object
+                            additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/experiments/{id}/export:
+    get:
+      tags: [Experiments]
+      summary: Export an experiment report (JSON or CSV)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, csv], default: json }
+      responses:
+        '200':
+          description: Downloadable report
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/csv:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  parameters:
+    SimulationId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      example: sim_mvc3r0it0001ymgs6g
+    ScenarioId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      example: saddar-balanced
+
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message: { type: string }
+            code: { type: string, example: BAD_REQUEST }
+            requestId: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+
+    Pagination:
+      type: object
+      properties:
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        hasMore: { type: boolean }
+
+    SignalOverrides:
+      type: object
+      properties:
+        minGreenSec: { type: number, minimum: 4, maximum: 90 }
+        maxGreenSec: { type: number, minimum: 10, maximum: 180 }
+        amberSec: { type: number, minimum: 1, maximum: 10 }
+        allRedSec: { type: number, minimum: 0, maximum: 10 }
+        fixedCycleSec: { type: number, minimum: 20, maximum: 300 }
+        fixedSplit: { type: number, minimum: 0.2, maximum: 0.8 }
+        switchMargin: { type: number, minimum: 0, maximum: 2 }
+        starvationWaitSec: { type: number, minimum: 20, maximum: 600 }
+        minMeaningfulScore: { type: number, minimum: 0, maximum: 1 }
+        saturationFlowPerLane: { type: number, minimum: 900, maximum: 2400 }
+        emergencyExtraGreenSec: { type: number, minimum: 0, maximum: 120 }
+        emergencyLookaheadM: { type: number, minimum: 50, maximum: 800 }
+
+    Overrides:
+      type: object
+      properties:
+        demandScale: { type: number, minimum: 0.1, maximum: 3 }
+        laneOverrides:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              lanesPerApproach: { type: integer, minimum: 1, maximum: 6 }
+        signal:
+          $ref: '#/components/schemas/SignalOverrides'
+        blockApproaches:
+          type: array
+          maxItems: 12
+          items:
+            type: object
+            required: [intersectionId, approach]
+            properties:
+              intersectionId: { type: string }
+              approach: { type: string, enum: [N, S, E, W] }
+              reason: { type: string, maxLength: 200 }
+        clearBlocked: { type: boolean }
+        emergency:
+          type: object
+          required: [enabled, entryIntersectionId, entrySide]
+          properties:
+            enabled: { type: boolean }
+            afterSec: { type: number, minimum: 0 }
+            entryIntersectionId: { type: string }
+            entrySide: { type: string, enum: [N, S, E, W] }
+            destinationIntersectionId: { type: string }
+
+    RunRequest:
+      type: object
+      required: [scenarioId]
+      properties:
+        scenarioId: { type: string, example: saddar-balanced }
+        mode: { type: string, enum: [fixed, adaptive], default: adaptive }
+        durationSec: { type: integer, minimum: 60, maximum: 3600, default: 600 }
+        seed: { type: integer, minimum: 0, default: 42 }
+        demandScale: { type: number, minimum: 0.1, maximum: 3, default: 1 }
+        label: { type: string, maxLength: 120 }
+        live: { type: boolean, default: false }
+        tickMs: { type: integer, minimum: 50, maximum: 2000, default: 100 }
+        record: { type: boolean, default: false }
+        recordFrameIntervalSec: { type: number, minimum: 0.5, maximum: 10 }
+        overrides:
+          $ref: '#/components/schemas/Overrides'
+
+    CompareRequest:
+      type: object
+      required: [scenarioId]
+      properties:
+        scenarioId: { type: string }
+        durationSec: { type: integer, minimum: 60, maximum: 3600 }
+        seed: { type: integer, minimum: 0 }
+        seeds:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items: { type: integer, minimum: 0 }
+        demandScale: { type: number, minimum: 0.1, maximum: 3 }
+        label: { type: string, maxLength: 120 }
+        overrides:
+          $ref: '#/components/schemas/Overrides'
+
+    ScenarioSummary:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        city: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        disclaimer: { type: string }
+        defaults:
+          type: object
+          properties:
+            durationSec: { type: integer }
+            seed: { type: integer }
+            demandScale: { type: number }
+        intersections:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              lat: { type: number }
+              lng: { type: number }
+        totalEntryDemandVehPerHour: { type: number }
+        worldBounds:
+          type: object
+          properties:
+            minX: { type: number }
+            minY: { type: number }
+            maxX: { type: number }
+            maxY: { type: number }
+            width: { type: number }
+            height: { type: number }
+            paddingM: { type: number }
+        blockedApproaches:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        assumptions:
+          type: array
+          items: { type: string }
+
+    Metrics:
+      type: object
+      properties:
+        averageWaitingTimeSec: { type: number }
+        averageWaitingTimeCompletedSec: { type: number }
+        averageTravelTimeSec: { type: number }
+        maxQueueLength: { type: number }
+        averageQueueLength: { type: number }
+        averageStoppedVehicles: { type: number }
+        maxStoppedVehicles: { type: number }
+        throughputVehicles: { type: integer }
+        throughputVehPerHour: { type: number }
+        completionRatePct: { type: number }
+        fairnessIndex: { type: number, nullable: true }
+        phaseSwitches: { type: integer }
+        preemptions: { type: integer }
+        vehiclesSpawned: { type: integer }
+        vehiclesCompleted: { type: integer }
+        vehiclesIncomplete: { type: integer }
+        vehiclesActiveAtEnd: { type: integer }
+        spawnCapReached: { type: boolean }
+      additionalProperties: true
+
+    Decision:
+      type: object
+      properties:
+        t: { type: number }
+        intersectionId: { type: string }
+        fromPhase: { type: string }
+        toPhase: { type: string }
+        reason:
+          type: string
+          enum: [fixed_cycle, max_green, demand_priority, starvation_prevention, emergency_preemption]
+        explanation: { type: string }
+        greenElapsedSec: { type: number }
+        details: { type: object, nullable: true, additionalProperties: true }
+
+    SimulationSummary:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string, nullable: true }
+        scenarioId: { type: string }
+        scenarioName: { type: string }
+        mode: { type: string, enum: [fixed, adaptive] }
+        seed: { type: integer }
+        durationSec: { type: integer }
+        demandScale: { type: number }
+        status: { type: string, enum: [queued, running, completed, failed] }
+        live: { type: boolean }
+        experimentId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+        runtimeMs: { type: integer, nullable: true }
+        metrics:
+          allOf:
+            - $ref: '#/components/schemas/Metrics'
+          nullable: true
+
+    Simulation:
+      allOf:
+        - $ref: '#/components/schemas/SimulationSummary'
+        - type: object
+          properties:
+            overrides: { type: object, additionalProperties: true }
+            engine: { type: object, additionalProperties: true }
+            perIntersection:
+              type: array
+              items: { type: object, additionalProperties: true }
+            perApproach:
+              type: array
+              items: { type: object, additionalProperties: true }
+            fairness: { type: object, additionalProperties: true }
+            timeSeries:
+              type: array
+              items: { type: object, additionalProperties: true }
+            decisions:
+              type: array
+              items:
+                $ref: '#/components/schemas/Decision'
+            assumptions:
+              type: array
+              items: { type: string }
+            disclaimer: { type: string }
+            framesIncluded: { type: boolean }
+            error: { type: string, nullable: true }
+
+    ComparisonRow:
+      type: object
+      properties:
+        key: { type: string }
+        label: { type: string }
+        unit: { type: string }
+        direction: { type: string, enum: [lower, higher] }
+        informational: { type: boolean }
+        fixed: { type: number, nullable: true }
+        adaptive: { type: number, nullable: true }
+        improvementPct: { type: number, nullable: true }
+        better:
+          type: string
+          nullable: true
+          enum: [adaptive, fixed, equal]
+        note: { type: string, nullable: true }
+
+    Comparison:
+      type: object
+      properties:
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComparisonRow'
+        summary:
+          type: object
+          properties:
+            verdict:
+              type: string
+              enum: [adaptive_better_on_balance, fixed_better_on_balance, mixed_or_inconclusive]
+            explanation: { type: string }
+            adaptiveWins: { type: integer }
+            fixedWins: { type: integer }
+            decisiveMetrics: { type: integer }
+            seeds:
+              type: array
+              items: { type: integer }
+            caveat: { type: string }
+            keyFindings:
+              type: array
+              items: { type: string }
+          additionalProperties: true
+
+    Experiment:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string, nullable: true }
+        scenarioId: { type: string }
+        scenarioName: { type: string }
+        seeds:
+          type: array
+          items: { type: integer }
+        durationSec: { type: integer }
+        demandScale: { type: number }
+        overrides: { type: object, additionalProperties: true }
+        runs:
+          type: object
+          properties:
+            fixed:
+              type: array
+              items: { type: string }
+            adaptive:
+              type: array
+              items: { type: string }
+        aggregate: { type: object, additionalProperties: true }
+        comparison:
+          $ref: '#/components/schemas/Comparison'
+        assumptions:
+          type: array
+          items: { type: string }
+        disclaimer: { type: string }
+        createdAt: { type: string, format: date-time }
+        runtimeMs: { type: integer }
+
+    HotspotResult:
+      type: object
+      properties:
+        simulationId: { type: string }
+        scenarioId: { type: string }
+        mode: { type: string }
+        seed: { type: integer }
+        durationSec: { type: integer }
+        generatedAt: { type: string, format: date-time }
+        thresholds: { type: object, additionalProperties: true }
+        summary:
+          type: object
+          additionalProperties: true
+        hotspots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Hotspot'
+        caveat: { type: string }
+
+    Hotspot:
+      type: object
+      properties:
+        id: { type: string }
+        simulationId: { type: string }
+        intersectionId: { type: string }
+        intersectionName: { type: string }
+        side: { type: string, enum: [N, S, E, W] }
+        approachName: { type: string }
+        location:
+          type: object
+          nullable: true
+          properties:
+            lat: { type: number }
+            lng: { type: number }
+            label: { type: string }
+            approximate: { type: boolean }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        score: { type: number }
+        evidenceStrength: { type: string, enum: [low, medium, high] }
+        evidence: { type: object, additionalProperties: true }
+        indicators:
+          type: array
+          items: { type: object, additionalProperties: true }
+        likelyCauses:
+          type: array
+          items:
+            type: string
+            enum:
+              - approach_closure
+              - insufficient_capacity
+              - turning_conflict
+              - demand_imbalance
+              - signal_allocation
+              - general_congestion
+        preliminaryInterventions:
+          type: array
+          items: { type: string }
+        caveat: { type: string }
+
+    Intervention:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+            - incident_management
+            - signal_optimization
+            - turn_restriction
+            - lane_or_road_redesign
+            - grade_separation_study
+        title: { type: string }
+        rationale: { type: string }
+        supportingEvidence:
+          type: array
+          items: { type: string }
+        confidence: { type: string, enum: [low, medium, high] }
+        studyRequired: { type: boolean }
+        canSignalTimingSolve: { type: boolean }
+        nextSteps:
+          type: array
+          items: { type: string }
+
+    Evaluation:
+      type: object
+      properties:
+        hotspotId: { type: string, nullable: true }
+        simulationId: { type: string, nullable: true }
+        intersectionId: { type: string, nullable: true }
+        intersectionName: { type: string, nullable: true }
+        side: { type: string, nullable: true }
+        severity: { type: string, nullable: true }
+        score: { type: number, nullable: true }
+        evidenceStrength: { type: string }
+        likelyCauses:
+          type: array
+          items: { type: string }
+        interventions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Intervention'
+        caveats:
+          type: array
+          items: { type: string }
+        disclaimer: { type: string }
+
+  securitySchemes: {}
+security: []
