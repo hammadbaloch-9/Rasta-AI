@@ -28,7 +28,7 @@ experiments, hotspot detection and preliminary infrastructure screening.
 - [Metrics definitions](#metrics-definitions)
 - [Scenarios](#scenarios)
 - [Testing](#testing)
-- [Docker](#docker)
+- [Running locally without Docker](#running-locally-without-docker)
 - [Demo script](#demo-script)
 - [Assumptions and limitations](#assumptions-and-limitations)
 - [Notes for the frontend team](#notes-for-the-frontend-team)
@@ -121,19 +121,20 @@ Copy `.env.example` to `.env`. Every setting is optional; defaults are sensible 
 
 ## Database modes
 
-`DB_MODE=auto` (default) tries MongoDB when `MONGODB_URI` is set and falls back to memory on
-failure. This keeps local development frictionless while allowing persistence in deployment.
+`DB_MODE=auto` (default) tries MongoDB when `MONGODB_URI` is set (e.g., local MongoDB service `mongodb://127.0.0.1:27017/raasta_ai`) and falls back automatically to an in-memory repository if MongoDB is not running. Docker is not required.
 
-- **memory** — ephemeral, zero setup, perfect for the 5-hour build and demos.
-- **mongo** — requires MongoDB; startup fails if it is unreachable (use for production-like runs).
+- **auto** — connects to local MongoDB if available; seamlessly switches to memory if unavailable.
+- **memory** — ephemeral, zero setup, perfect for local development, tests, and demos.
+- **mongo** — strictly requires MongoDB (startup fails if unreachable).
 
-Start MongoDB locally with Docker if needed:
+If you have MongoDB Community Server installed locally on Windows/Linux, start the service or mongod:
 
 ```bash
-docker run -d -p 27017:27017 --name raasta-mongo mongo:7
+# Optional: run local MongoDB daemon
+mongod --dbpath <data-directory>
 ```
 
-Health always reports which mode is active:
+`/api/health` always reports which mode is active:
 
 ```json
 { "db": { "mode": "memory", "connected": false, "persistent": false } }
@@ -324,7 +325,7 @@ raasta-ai-backend/
 ├── tests/                       # node:test suites (49 tests)
 ├── scripts/demo.js
 ├── docs/                        # API.md, SIMULATION_MODEL.md, openapi.yaml
-├── Dockerfile / docker-compose.yml / .env.example
+├── .env.example
 └── README.md
 ```
 
@@ -402,13 +403,26 @@ npm test
 
 ---
 
-## Docker
+## Running locally without Docker
+
+The backend runs 100% natively on Node.js without requiring Docker or containerization.
 
 ```bash
-docker compose up --build
+# 1. Install dependencies
+npm install
+
+# 2. Run test suite
+npm test
+
+# 3. Start development server (auto-reloads on edits)
+npm run dev
+
+# 4. Start production server
+npm start
 ```
 
-Starts the API (`:4000`) and MongoDB (`:27017`) with persistence.
+- **With local MongoDB:** Ensure MongoDB is running on port 27017. All simulations, comparisons, and hotspots will be stored in your local `raasta_ai` MongoDB database.
+- **Without MongoDB:** The application automatically falls back to its built-in in-memory repository with zero setup required. Run `npm run verify:mongo` to test MongoDB persistence via ephemeral memory server.
 
 ---
 

@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test --test-concurrency=1 tests/",
+    "test": "node --test --test-concurrency=1 \"tests/*.test.js\"",
     "demo": "node scripts/demo.js",
     "verify:mongo": "node scripts/verify-mongo.js"
   },
